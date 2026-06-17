@@ -6,7 +6,7 @@ de unhas em soft gel. Operador-only — só Tassinha e Paulo usam.
 ## Status do projeto
 
 - [x] Sessão 1 — Schema do Supabase + estrutura do projeto
-- [ ] Sessão 2 — Bot base + ferramentas CRUD
+- [x] Sessão 2 — Bot base + ferramentas CRUD
 - [ ] Sessão 3 — Ferramentas de consulta + métricas
 - [ ] Sessão 4 — Jobs proativos
 - [ ] Sessão 5 — Polimento e entrega
