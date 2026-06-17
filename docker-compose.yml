@@ -1,0 +1,16 @@
+services:
+  bot:
+    build: .
+    container_name: tassinha-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: python bot.py
+
+  scheduler:
+    build: .
+    container_name: tassinha-scheduler
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: python scheduler.py
