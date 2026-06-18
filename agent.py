@@ -8,7 +8,10 @@ de função.
 """
 import os
 import json
+import logging
 import google.generativeai as genai
+
+logger = logging.getLogger(__name__)
 
 from tools import clientes, atendimentos, pagamentos, indicacoes
 
@@ -217,7 +220,7 @@ def processar_mensagem(user_id: int, texto: str) -> str:
         tool_responses = []
         for call in function_calls:
             fn_name = call.name
-            fn_args = dict(call.args)
+            fn_args = {k: v for k, v in call.args.items()}
             fn = TOOL_REGISTRY.get(fn_name)
 
             if fn is None:
@@ -226,6 +229,9 @@ def processar_mensagem(user_id: int, texto: str) -> str:
                 try:
                     result = fn(**fn_args)
                 except Exception as e:
+                    logger.exception(
+                        f"Falha na ferramenta '{fn_name}' com args {fn_args}"
+                    )
                     result = {"erro": str(e)}
 
             tool_responses.append(
