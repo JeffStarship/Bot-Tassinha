@@ -1,7 +1,6 @@
 """
 Bot Telegram operador-only. Só responde a IDs na whitelist.
-Qualquer mensagem de fora é silenciosamente ignorada (sem log de
-conteúdo de quem não é autorizado).
+Qualquer mensagem de fora é silenciosamente ignorada.
 """
 import os
 import logging
@@ -27,9 +26,7 @@ def _autorizado(user_id: int) -> bool:
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
-
     if not _autorizado(user_id):
-        # Ignora silenciosamente — sem responder, sem logar conteúdo
         logger.warning(f"Mensagem ignorada de ID não autorizado: {user_id}")
         return
 
@@ -38,13 +35,36 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
     try:
         resposta = processar_mensagem(user_id, texto)
-    except Exception as e:
+    except Exception:
         logger.exception("Erro ao processar mensagem")
         resposta = (
             "Deu um erro aqui processando isso. Tenta de novo ou reformula "
             "a mensagem. Se persistir, chama o Paulo."
         )
 
+    await update.message.reply_text(resposta)
+
+
+async def cmd_consultor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Válvula manual: força escalada pro consultor (Sonnet)."""
+    user_id = update.effective_user.id
+    if not _autorizado(user_id):
+        return
+
+    # Texto após o /consultor
+    pergunta = update.message.text.replace("/consultor", "", 1).strip()
+    if not pergunta:
+        await update.message.reply_text(
+            "Manda a pergunta junto, tipo: /consultor tô indo bem esse mês?"
+        )
+        return
+
+    await update.message.chat.send_action(action="typing")
+    try:
+        resposta = processar_mensagem(user_id, pergunta, forcar_consultor=True)
+    except Exception:
+        logger.exception("Erro no /consultor")
+        resposta = "Deu erro acionando o consultor. Tenta de novo em alguns minutos."
     await update.message.reply_text(resposta)
 
 
@@ -61,9 +81,10 @@ def main() -> None:
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("reset", cmd_reset))
+    app.add_handler(CommandHandler("consultor", cmd_consultor))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    logger.info("Bot Tassinha iniciado.")
+    logger.info("Bot Tassinha iniciado (Haiku + roteamento Sonnet).")
     app.run_polling()
 
 

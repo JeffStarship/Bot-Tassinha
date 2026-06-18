@@ -1,26 +1,40 @@
 """
-Camada do agente: recebe texto da Tassinha, decide quais ferramentas
-chamar via Gemini, executa, e devolve a resposta em linguagem natural.
+Camada do agente (Haiku 4.5 via Anthropic API).
 
-Princípio inegociável: a IA NUNCA inventa dado. Todo número/fato vem
-do retorno de uma ferramenta. Esta camada só traduz texto <-> chamadas
-de função.
+Recebe texto da Tassinha, decide quais ferramentas chamar, executa, e
+devolve a resposta em linguagem natural.
+
+Princípios inegociáveis:
+- A IA NUNCA inventa dado. Todo número/fato vem do retorno de uma ferramenta.
+- Haiku NUNCA dá conselho de negócio sozinho. Perguntas de análise/conselho
+  são escaladas pro consultor (Sonnet) via ferramenta escalar_para_consultor.
 """
 import os
 import json
 import logging
-import google.generativeai as genai
+from anthropic import Anthropic
+
+from tools import clientes, atendimentos, pagamentos, indicacoes
+import consultor
 
 logger = logging.getLogger(__name__)
 
-from tools import clientes, atendimentos, pagamentos, indicacoes
+_anthropic: Anthropic | None = None
 
-genai.configure(api_key=os.environ["GEMINI_API_KEY"])
+
+def _client() -> Anthropic:
+    global _anthropic
+    if _anthropic is None:
+        _anthropic = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+    return _anthropic
+
 
 with open("prompts/system_prompt.txt", "r", encoding="utf-8") as f:
     SYSTEM_PROMPT = f.read()
 
-# Mapa nome_da_funcao -> funcao Python real
+MODELO_HAIKU = os.environ.get("MODELO_HAIKU", "claude-haiku-4-5")
+
+# Mapa nome -> função Python real
 TOOL_REGISTRY = {
     "buscar_cliente": clientes.buscar_cliente,
     "criar_cliente": clientes.criar_cliente,
@@ -32,14 +46,15 @@ TOOL_REGISTRY = {
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
+    "escalar_para_consultor": lambda pergunta: {"resposta_consultor": consultor.consultar(pergunta)},
 }
 
-# Declaração das ferramentas no formato que o Gemini espera
-TOOL_DECLARATIONS = [
+# Declaração das ferramentas no formato da API Anthropic
+TOOLS = [
     {
         "name": "buscar_cliente",
         "description": "Busca cliente pelo nome (busca parcial). Use sempre antes de registrar atendimento ou criar cliente nova, pra checar se ela já existe.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {"nome": {"type": "string"}},
             "required": ["nome"],
@@ -48,7 +63,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "criar_cliente",
         "description": "Cria uma cliente nova no banco.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "nome": {"type": "string"},
@@ -66,7 +81,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "atualizar_cliente",
         "description": "Atualiza dados de uma cliente já existente.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cliente_id": {"type": "string"},
@@ -77,8 +92,8 @@ TOOL_DECLARATIONS = [
     },
     {
         "name": "registrar_atendimento",
-        "description": "Registra um atendimento realizado (ou agendado). Use depois de confirmar qual cliente_id é o correto.",
-        "parameters": {
+        "description": "Registra um atendimento realizado. Use depois de confirmar qual cliente_id é o correto.",
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cliente_id": {"type": "string"},
@@ -99,7 +114,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "agendar",
         "description": "Agenda um atendimento futuro, sem valor definido ainda.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "cliente_id": {"type": "string"},
@@ -112,7 +127,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "listar_agenda",
         "description": "Lista agendamentos futuros num período.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "data_inicio": {"type": "string", "description": "YYYY-MM-DD"},
@@ -124,7 +139,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "atualizar_status_atendimento",
         "description": "Marca um atendimento como concluído, no-show ou cancelado.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "atendimento_id": {"type": "string"},
@@ -139,7 +154,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "registrar_pagamento",
         "description": "Registra um pagamento (sinal, restante ou total) de um atendimento.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "atendimento_id": {"type": "string"},
@@ -154,7 +169,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "saldo_atendimento",
         "description": "Mostra quanto já foi pago e quanto falta de um atendimento.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {"atendimento_id": {"type": "string"}},
             "required": ["atendimento_id"],
@@ -163,7 +178,7 @@ TOOL_DECLARATIONS = [
     {
         "name": "registrar_indicacao",
         "description": "Registra que uma cliente indicou outra.",
-        "parameters": {
+        "input_schema": {
             "type": "object",
             "properties": {
                 "indicadora_id": {"type": "string"},
@@ -173,78 +188,98 @@ TOOL_DECLARATIONS = [
             "required": ["indicadora_id", "indicada_id", "data"],
         },
     },
+    {
+        "name": "escalar_para_consultor",
+        "description": (
+            "Escala a pergunta para o consultor estratégico (modelo avançado que "
+            "analisa os dados reais do negócio). Use SEMPRE que a Tassinha pedir "
+            "análise, opinião, julgamento, explicação de causa, comparação "
+            "interpretada, ou conselho sobre o negócio — qualquer coisa que não "
+            "seja um registro ou uma consulta direta de número/lista. Na dúvida "
+            "entre responder você mesmo e escalar, SEMPRE escale. Você NUNCA dá "
+            "conselho de negócio por conta própria."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "pergunta": {
+                    "type": "string",
+                    "description": "A pergunta da Tassinha, repassada na íntegra ou levemente reformulada para clareza.",
+                }
+            },
+            "required": ["pergunta"],
+        },
+    },
 ]
 
-_model = genai.GenerativeModel(
-    model_name="gemini-2.5-flash",
-    system_instruction=SYSTEM_PROMPT,
-    tools=[{"function_declarations": TOOL_DECLARATIONS}],
-)
-
-# Sessões de chat por usuário (memória de curto prazo por conversa)
-_sessions: dict[int, genai.ChatSession] = {}
+# Histórico de conversa por usuário (memória de curto prazo)
+_sessions: dict[int, list] = {}
 
 
-def _get_session(user_id: int) -> genai.ChatSession:
-    if user_id not in _sessions:
-        _sessions[user_id] = _model.start_chat()
-    return _sessions[user_id]
+def _get_history(user_id: int) -> list:
+    return _sessions.setdefault(user_id, [])
 
 
 def reset_session(user_id: int) -> None:
-    """Limpa o histórico de conversa de um usuário (evita degradação em contexto longo)."""
     _sessions.pop(user_id, None)
 
 
-def processar_mensagem(user_id: int, texto: str) -> str:
+def processar_mensagem(user_id: int, texto: str, forcar_consultor: bool = False) -> str:
     """
-    Recebe o texto da Tassinha, roda o loop de tool calling até o
-    Gemini decidir que tem resposta final, e devolve o texto pra
-    enviar de volta no Telegram.
+    Roda o loop de tool calling até o Haiku dar a resposta final.
+    Se forcar_consultor=True (comando /consultor), escala direto pro Sonnet.
     """
-    session = _get_session(user_id)
-    response = session.send_message(texto)
+    if forcar_consultor:
+        return consultor.consultar(texto)
 
-    # Loop: enquanto o Gemini pedir chamada de ferramenta, executamos
-    # e devolvemos o resultado, até ele responder só com texto.
+    history = _get_history(user_id)
+    history.append({"role": "user", "content": texto})
+
     max_iteracoes = 8
     for _ in range(max_iteracoes):
-        function_calls = [
-            part.function_call
-            for part in response.candidates[0].content.parts
-            if part.function_call
-        ]
-        if not function_calls:
-            break
-
-        tool_responses = []
-        for call in function_calls:
-            fn_name = call.name
-            fn_args = {k: v for k, v in call.args.items()}
-            fn = TOOL_REGISTRY.get(fn_name)
-
-            if fn is None:
-                result = {"erro": f"ferramenta {fn_name} não existe"}
-            else:
-                try:
-                    result = fn(**fn_args)
-                except Exception as e:
-                    logger.exception(
-                        f"Falha na ferramenta '{fn_name}' com args {fn_args}"
-                    )
-                    result = {"erro": str(e)}
-
-            tool_responses.append(
-                genai.protos.Part(
-                    function_response=genai.protos.FunctionResponse(
-                        name=fn_name,
-                        response={"result": json.dumps(result, default=str)},
-                    )
-                )
-            )
-
-        response = session.send_message(
-            genai.protos.Content(parts=tool_responses)
+        resp = _client().messages.create(
+            model=MODELO_HAIKU,
+            max_tokens=1024,
+            system=SYSTEM_PROMPT,
+            tools=TOOLS,
+            messages=history,
         )
 
-    return response.text
+        # Adiciona a resposta do assistant ao histórico
+        history.append({"role": "assistant", "content": resp.content})
+
+        # Verifica se há tool_use nos blocos
+        tool_uses = [b for b in resp.content if b.type == "tool_use"]
+
+        if not tool_uses:
+            # Resposta final: junta os blocos de texto
+            texto_final = "".join(
+                b.text for b in resp.content if b.type == "text"
+            )
+            return texto_final.strip() or "Ok."
+
+        # Executa cada ferramenta e monta os tool_results
+        tool_results = []
+        for tu in tool_uses:
+            fn = TOOL_REGISTRY.get(tu.name)
+            if fn is None:
+                resultado = {"erro": f"ferramenta {tu.name} não existe"}
+            else:
+                try:
+                    resultado = fn(**tu.input)
+                except Exception as e:
+                    logger.exception(
+                        f"Falha na ferramenta '{tu.name}' com input {tu.input}"
+                    )
+                    resultado = {"erro": str(e)}
+
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": json.dumps(resultado, default=str, ensure_ascii=False),
+            })
+
+        # Devolve os resultados como mensagem do usuário
+        history.append({"role": "user", "content": tool_results})
+
+    return "Precisei de muitos passos pra isso e parei por segurança. Tenta reformular a mensagem."
