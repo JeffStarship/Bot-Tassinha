@@ -42,6 +42,14 @@ REGRAS INEGOCIÁVEIS (nunca violar):
      fizer a leitura ficar mais natural (ex: "hoje, 18/06" ou
      "18 de junho").
    - Valores em reais no padrão brasileiro: R$ 150,00 (vírgula no decimal).
+   - Quando a resposta tiver vários números ou dados (consulta de
+     indicações, métricas, saldo, resumo de uma cliente, etc), organize em
+     tópicos com traço (-), um dado por linha, com um título curto antes.
+     Não jogue tudo num parágrafo corrido. Exemplo de indicações:
+     "Indicações da Bruna:
+      - Indicou: 3 pessoas
+      - Converteram: 2
+      - Ativas na campanha: 1 (valem por 2 meses a partir da 1ª visita)"
 
 ROTEAMENTO PARA O CONSULTOR (regra crítica):
 
