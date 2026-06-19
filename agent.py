@@ -17,7 +17,7 @@ import pytz
 from anthropic import Anthropic
 
 from tools import clientes, atendimentos, pagamentos, indicacoes
-from tools import metricas, risco, financeiro, servicos
+from tools import metricas, risco, financeiro, servicos, preferencias
 import consultor
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,10 @@ TOOL_REGISTRY = {
     "ajustar_inicio_atendimento": atendimentos.ajustar_inicio_atendimento,
     "marcar_cancelamento": atendimentos.marcar_cancelamento,
     "parar_de_avisar_reagendar": atendimentos.parar_de_avisar_reagendar,
+    # Sessão 9 — preferências por cliente
+    "definir_followup_cliente": preferencias.definir_followup_cliente,
+    "resetar_followup_cliente": preferencias.resetar_followup_cliente,
+    "ver_followup_cliente": preferencias.ver_followup_cliente,
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
@@ -411,6 +415,40 @@ TOOLS = [
     {
         "name": "parar_de_avisar_reagendar",
         "description": "Para de mostrar uma cliente cancelada na lista de 'falta reagendar' do resumo diário. Use quando a Tassia disser 'pode parar de avisar da Bruna' ou 'não precisa mais lembrar de reagendar a Bruna'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"cliente_id": {"type": "string"}},
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "definir_followup_cliente",
+        "description": "Customiza o follow-up de UMA cliente específica (sobrescreve o padrão). Pode mudar: ligar/desligar (ativo), texto do lembrete de dias antes, texto do lembrete de horas antes, quantos dias antes, quantas horas antes. Só passe os campos que vão mudar. SEMPRE confirme com a Tassia o que vai mudar antes de chamar. Nos textos, use {nome} e {hora} que são preenchidos sozinhos.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "ativo": {"type": "boolean", "description": "False desliga os lembretes dessa cliente"},
+                "texto_dias_antes": {"type": "string"},
+                "texto_horas_antes": {"type": "string"},
+                "dias_antes": {"type": "integer"},
+                "horas_antes": {"type": "integer"},
+            },
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "resetar_followup_cliente",
+        "description": "Remove todas as customizações de follow-up de uma cliente — ela volta ao padrão. Use quando a Tassia disser 'volta a Bruna pro padrão'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"cliente_id": {"type": "string"}},
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "ver_followup_cliente",
+        "description": "Mostra as customizações de follow-up de uma cliente (ou diz que ela usa o padrão). Use pra 'como está o lembrete da Bruna'.",
         "input_schema": {
             "type": "object",
             "properties": {"cliente_id": {"type": "string"}},

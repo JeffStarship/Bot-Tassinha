@@ -424,23 +424,46 @@ def _hora_fmt(hora_val) -> str:
     return s[:5]
 
 
-def _disparar_followup(a: dict, modelo_chave: str, default_msg: str, marcar_rpc: str):
-    """Monta msg + botão wa.me e envia. Marca como avisado depois."""
+def _pref_cliente(cliente_id: str, chave: str) -> str | None:
+    """Lê uma preferência da cliente, ou None se não houver."""
+    try:
+        db = get_client()
+        resp = db.rpc("_pref", {"p_cliente_id": cliente_id, "p_chave": chave}).execute()
+        if resp.data:
+            # _pref retorna scalar; supabase embrulha em lista de dict
+            row = resp.data[0] if isinstance(resp.data, list) else resp.data
+            if isinstance(row, dict):
+                return list(row.values())[0]
+            return row
+    except Exception:
+        logger.exception(f"_pref_cliente {chave} falhou")
+    return None
+
+
+def _disparar_followup(a: dict, modelo_chave: str, default_msg: str, marcar_rpc: str,
+                       pref_texto_chave: str, quando_label: str):
+    """
+    Monta msg + botão wa.me e envia. Marca como avisado depois.
+    Usa texto customizado da cliente (se houver), senão o padrão global.
+    quando_label: texto pronto de "quando" (ex: 'amanhã', 'daqui a 2 dias',
+    'hoje') já calculado pelo job conforme a preferência da cliente.
+    """
     db = get_client()
     nome = a["nome"]
     primeiro_nome = nome.split()[0] if nome else nome
     hora = _hora_fmt(a["hora"])
     tel = a.get("telefone")
-    template = _config(modelo_chave, default_msg)
+
+    # texto: preferência da cliente > padrão global > default
+    template = _pref_cliente(a["cliente_id"], pref_texto_chave) or _config(modelo_chave, default_msg)
     msg_cliente = template.replace("{nome}", nome).replace("{hora}", hora)
-    quando = "amanhã" if ("amanha" in modelo_chave or "1d" in modelo_chave) else "hoje"
 
     if tel:
-        texto = f"Lembrete: {nome} tem horário {quando} às {hora}.\nMensagem pronta no botão abaixo."
+        texto = f"Lembrete: {nome} tem horário {quando_label} às {hora}.\nMensagem pronta no botão abaixo."
         link = _link_whatsapp(tel, msg_cliente)
         _enviar(texto, botao_texto=f"Mandar lembrete WhatsApp {primeiro_nome}", botao_url=link)
     else:
-        texto = (f"Lembrete: {nome} tem horário {quando} às {hora}, mas não tem "
+        texto = (f"Lembrete: {nome} tem horário {quando_label} às {hora}, mas não tem "
                  f"telefone cadastrado. Cadastre o número da {primeiro_nome} pra "
                  f"ativar o botão de WhatsApp nos próximos lembretes.")
         _enviar(texto)
@@ -450,21 +473,23 @@ def _disparar_followup(a: dict, modelo_chave: str, default_msg: str, marcar_rpc:
 
 
 def job_followup_1dia():
-    """Roda 1x de manhã: follow-up das clientes agendadas pra amanhã."""
+    """Roda 1x de manhã: follow-up das clientes agendadas (dias antes configurável)."""
     hoje = _hoje()
     db = get_client()
     try:
         resp = db.rpc("followups_1dia", {"p_hoje": hoje.isoformat()}).execute()
         for a in (resp.data or []):
+            dias = int(a.get("dias_antes") or 1)
+            quando = "amanhã" if dias == 1 else f"daqui a {dias} dias"
             _disparar_followup(a, "followup_1d_msg",
                                "Oi {nome}! Passando pra confirmar seu horário amanhã às {hora}. Posso confirmar?",
-                               "marcar_followup_1d")
+                               "marcar_followup_1d", "followup_1d_texto", quando)
     except Exception:
         logger.exception("job_followup_1dia falhou")
 
 
 def job_followup_3horas():
-    """Roda a cada 5 min: follow-up das clientes ~3h antes do horário."""
+    """Roda a cada 5 min: follow-up N horas antes (configurável por cliente)."""
     agora = datetime.now(TZ)
     hoje = agora.date()
     db = get_client()
@@ -475,9 +500,11 @@ def job_followup_3horas():
             "p_tolerancia_min": 5,
         }).execute()
         for a in (resp.data or []):
+            horas = int(a.get("horas_antes") or 3)
+            quando = "hoje"  # é sempre no mesmo dia
             _disparar_followup(a, "followup_3h_msg",
                                "Oi {nome}! Lembrete do seu horário hoje às {hora}. Está tudo certo?",
-                               "marcar_followup_3h")
+                               "marcar_followup_3h", "followup_3h_texto", quando)
     except Exception:
         logger.exception("job_followup_3horas falhou")
 
