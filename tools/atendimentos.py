@@ -101,3 +101,68 @@ def atualizar_status_atendimento(atendimento_id: str, status: str) -> dict:
     if not resp.data:
         return {"atualizado": False, "erro": "atendimento não encontrado"}
     return {"atualizado": True, "atendimento": resp.data[0]}
+
+
+def ajustar_inicio_atendimento(
+    cliente_id: str = None,
+    atendimento_id: str = None,
+    ainda_nao_comecou: bool = False,
+    hora_inicio: str = None,
+) -> dict:
+    """
+    Ajusta o início real de um atendimento agendado pra HOJE, pros lembretes
+    de início/fim caírem na hora certa quando há atraso.
+
+    Use quando a Tassia disser coisas como:
+    - "a Bruna ainda não começou" -> ainda_nao_comecou=True (segura o lembrete)
+    - "a Bruna começou agora"      -> hora_inicio com a hora atual
+    - "a Bruna começou às 15h"     -> hora_inicio="15:00"
+
+    Identifique o atendimento por cliente_id (busca o agendamento de hoje dessa
+    cliente) ou diretamente por atendimento_id. hora_inicio no formato HH:MM.
+    """
+    from datetime import date
+    db = get_client()
+
+    # Localiza o atendimento de hoje
+    if not atendimento_id:
+        if not cliente_id:
+            return {"ok": False, "erro": "preciso saber de qual cliente é o atendimento"}
+        hoje = date.today().isoformat()
+        resp = (
+            db.table("atendimentos")
+            .select("id, hora, servico")
+            .eq("cliente_id", cliente_id)
+            .eq("data", hoje)
+            .eq("status", "agendado")
+            .order("hora")
+            .execute()
+        )
+        if not resp.data:
+            return {"ok": False, "erro": "nenhum atendimento agendado pra hoje dessa cliente"}
+        if len(resp.data) > 1:
+            return {"ok": False, "erro": "essa cliente tem mais de um atendimento hoje — especifique qual"}
+        atendimento_id = resp.data[0]["id"]
+
+    if ainda_nao_comecou:
+        db.table("atendimentos").update({
+            "inicio_segurado": True,
+            "avisado_inicio": False,
+        }).eq("id", atendimento_id).execute()
+        return {"ok": True, "acao": "segurado",
+                "msg": "lembrete de início segurado — me avise quando começar de fato"}
+
+    if hora_inicio:
+        # libera o segurado, grava o início real e reabre os avisos pra recontar
+        from datetime import datetime
+        hoje = date.today().isoformat()
+        inicio_real_ts = f"{hoje}T{hora_inicio}:00-03:00"  # offset SP
+        db.table("atendimentos").update({
+            "inicio_real": inicio_real_ts,
+            "inicio_segurado": False,
+            "avisado_inicio": True,   # início já reconhecido pela Tassia
+            "avisado_fim": False,     # recontar o fim a partir do início real
+        }).eq("id", atendimento_id).execute()
+        return {"ok": True, "acao": "inicio_ajustado", "hora_inicio": hora_inicio}
+
+    return {"ok": False, "erro": "diga se ainda não começou ou a que horas começou"}

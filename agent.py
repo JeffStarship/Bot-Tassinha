@@ -69,6 +69,7 @@ TOOL_REGISTRY = {
     "agendar": atendimentos.agendar,
     "listar_agenda": atendimentos.listar_agenda,
     "atualizar_status_atendimento": atendimentos.atualizar_status_atendimento,
+    "ajustar_inicio_atendimento": atendimentos.ajustar_inicio_atendimento,
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
@@ -197,6 +198,18 @@ TOOLS = [
                 },
             },
             "required": ["atendimento_id", "status"],
+        },
+    },
+    {
+        "name": "ajustar_inicio_atendimento",
+        "description": "Ajusta o início real de um atendimento de hoje pros lembretes de início/fim caírem certo quando há atraso. Use quando a Tassia disser que uma cliente ainda não começou ('a Bruna ainda não começou' -> ainda_nao_comecou=True) ou a que horas começou ('começou agora' / 'começou às 15h' -> hora_inicio). Identifique pela cliente (cliente_id de buscar_cliente).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "ainda_nao_comecou": {"type": "boolean"},
+                "hora_inicio": {"type": "string", "description": "HH:MM, quando começou de fato"},
+            },
         },
     },
     {

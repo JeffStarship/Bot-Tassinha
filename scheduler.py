@@ -321,13 +321,71 @@ def job_mensal():
         logger.exception("job_mensal falhou")
 
 
+def _eh_manutencao(servico: str) -> bool:
+    return "manuten" in (servico or "").lower()
+
+
+def montar_msg_inicio(nome: str, servico: str) -> str:
+    return f"O atendimento da {nome} está começando agora ({servico})."
+
+
+def montar_msg_fim(nome: str, servico: str) -> str:
+    if _eh_manutencao(servico):
+        proximo = "já deixe o próximo alongamento agendado"
+    else:
+        proximo = "já deixe a manutenção agendada"
+    return (
+        f"O atendimento da {nome} está quase acabando. Antes dela ir embora:\n"
+        f"- {proximo[0].upper()}{proximo[1:]}\n"
+        f"- Comente do programa de indicações com ela"
+    )
+
+
+def job_lembretes():
+    """Roda a cada 5 min: dispara lembrete de início e de fim na hora certa."""
+    agora = datetime.now(TZ)
+    hoje = agora.date()
+    hora_atual = agora.time()
+    db = get_client()
+
+    # COMEÇANDO
+    try:
+        resp = db.rpc("atendimentos_comecando", {
+            "p_hoje": hoje.isoformat(),
+            "p_agora": hora_atual.strftime("%H:%M:%S"),
+            "p_tolerancia_min": 5,
+        }).execute()
+        for a in (resp.data or []):
+            _enviar(montar_msg_inicio(a["nome"], a["servico"]))
+            db.rpc("marcar_avisado_inicio", {"p_id": a["id"]}).execute()
+            logger.info(f"Lembrete de INÍCIO enviado: {a['nome']}")
+    except Exception:
+        logger.exception("job_lembretes: início falhou")
+
+    # ACABANDO
+    try:
+        resp = db.rpc("atendimentos_acabando", {
+            "p_hoje": hoje.isoformat(),
+            "p_agora_ts": agora.isoformat(),
+            "p_tolerancia_min": 5,
+        }).execute()
+        for a in (resp.data or []):
+            _enviar(montar_msg_fim(a["nome"], a["servico"]))
+            db.rpc("marcar_avisado_fim", {"p_id": a["id"]}).execute()
+            logger.info(f"Lembrete de FIM enviado: {a['nome']}")
+    except Exception:
+        logger.exception("job_lembretes: fim falhou")
+
+
 def main():
     sched = BlockingScheduler(timezone=TZ)
-    # Os três jobs disparam 9h; cada um filtra o próprio dia internamente.
+    # Resumos: disparam 9h; cada um filtra o próprio dia internamente.
     sched.add_job(job_diario, "cron", hour=9, minute=0, id="diario")
     sched.add_job(job_semanal, "cron", hour=9, minute=0, id="semanal")
     sched.add_job(job_mensal, "cron", hour=9, minute=0, id="mensal")
-    logger.info("Scheduler Tassinha iniciado (diário seg-sáb, semanal dom, mensal dia 1º — 9h SP).")
+    # Lembretes de início/fim: verifica a cada 5 minutos ao longo do dia.
+    sched.add_job(job_lembretes, "interval", minutes=5, id="lembretes")
+    logger.info("Scheduler Tassinha iniciado (resumos 9h + lembretes início/fim a cada 5min — SP).")
     sched.start()
 
 
