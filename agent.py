@@ -75,6 +75,9 @@ TOOL_REGISTRY = {
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
+    "consultar_indicacoes": indicacoes.consultar_indicacoes,
+    "listar_indicacoes_ativas": indicacoes.listar_indicacoes_ativas,
+    "ranking_indicadoras": indicacoes.ranking_indicadoras,
     # Sessão 5 — serviços/preços
     "cadastrar_servico": servicos.cadastrar_servico,
     "listar_servicos": servicos.listar_servicos,
@@ -240,7 +243,7 @@ TOOLS = [
     },
     {
         "name": "registrar_indicacao",
-        "description": "Registra que uma cliente indicou outra.",
+        "description": "Registra que uma cliente indicou outra. A indicada precisa já existir como cliente (use criar_cliente antes se necessário). A conversão e a validade da campanha acontecem automaticamente quando a indicada fizer o primeiro atendimento.",
         "input_schema": {
             "type": "object",
             "properties": {
@@ -249,6 +252,32 @@ TOOLS = [
                 "data": {"type": "string", "description": "YYYY-MM-DD"},
             },
             "required": ["indicadora_id", "indicada_id", "data"],
+        },
+    },
+    {
+        "name": "consultar_indicacoes",
+        "description": "Mostra os números de indicação de uma cliente: total que ela indicou, quantas converteram (viraram cliente) e quantas estão ativas na campanha (dentro da validade). Use pra 'quantas a Bruna indicou', 'quantas indicações da Bruna estão valendo'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"indicadora_id": {"type": "string"}},
+            "required": ["indicadora_id"],
+        },
+    },
+    {
+        "name": "listar_indicacoes_ativas",
+        "description": "Lista as indicações que estão valendo agora pra uma cliente, com o nome de cada indicada e quantos dias faltam pra expirar. Use pra 'quais indicações da Bruna estão ativas'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"indicadora_id": {"type": "string"}},
+            "required": ["indicadora_id"],
+        },
+    },
+    {
+        "name": "ranking_indicadoras",
+        "description": "Ranking das clientes que mais indicaram (ordenado por quantas converteram). Use pra 'quem mais me indicou clientes', 'minhas maiores indicadoras'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"limite": {"type": "integer", "description": "quantas trazer, default 10"}},
         },
     },
     {
