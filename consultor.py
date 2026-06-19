@@ -13,6 +13,8 @@ Se a chamada ao Sonnet falhar (cota, rede), retorna fallback gracioso.
 """
 import os
 import logging
+from datetime import datetime
+import pytz
 from anthropic import Anthropic
 
 from tools import metricas, risco, financeiro
@@ -20,6 +22,26 @@ from tools import metricas, risco, financeiro
 logger = logging.getLogger(__name__)
 
 _anthropic: Anthropic | None = None
+
+_MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+          "agosto", "setembro", "outubro", "novembro", "dezembro"]
+
+
+def _data_hoje() -> str:
+    tz = pytz.timezone(os.environ.get("TIMEZONE", "America/Sao_Paulo"))
+    agora = datetime.now(tz)
+    return (f"Hoje é {agora.day} de {_MESES[agora.month - 1]} de {agora.year} "
+            f"({agora.strftime('%d/%m/%Y')}).")
+
+
+# Reforço de formatação: a resposta do consultor vai direto pra Tassinha via
+# Telegram, então não pode ter markdown nem id técnico.
+_REGRA_SAIDA = (
+    "\n\nFORMATO DA RESPOSTA: escreva texto puro, como mensagem de WhatsApp. "
+    "NUNCA use asteriscos, negrito ou markdown. Para listas use traço (-) ou "
+    "números. Nunca mostre id ou código técnico — fale das clientes pelo nome. "
+    "Valores em reais no padrão brasileiro (R$ 150,00)."
+)
 
 
 def _client() -> Anthropic:
@@ -123,12 +145,13 @@ def consultar(pergunta: str) -> str:
     """
     contexto = _montar_contexto_dados()
     modelo = os.environ.get("MODELO_SONNET", "claude-sonnet-4-6")
+    system_completo = f"{CONSULTOR_PROMPT}{_REGRA_SAIDA}\n\nDATA ATUAL: {_data_hoje()}"
 
     try:
         resp = _client().messages.create(
             model=modelo,
             max_tokens=1024,
-            system=CONSULTOR_PROMPT,
+            system=system_completo,
             messages=[
                 {
                     "role": "user",

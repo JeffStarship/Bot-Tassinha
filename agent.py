@@ -12,6 +12,8 @@ Princípios inegociáveis:
 import os
 import json
 import logging
+from datetime import datetime
+import pytz
 from anthropic import Anthropic
 
 from tools import clientes, atendimentos, pagamentos, indicacoes
@@ -21,6 +23,29 @@ import consultor
 logger = logging.getLogger(__name__)
 
 _anthropic: Anthropic | None = None
+
+# Dias da semana em português para a data por extenso
+_DIAS = ["segunda-feira", "terça-feira", "quarta-feira", "quinta-feira",
+         "sexta-feira", "sábado", "domingo"]
+_MESES = ["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+          "agosto", "setembro", "outubro", "novembro", "dezembro"]
+
+
+def _data_hoje() -> str:
+    """
+    Data de hoje no timezone do projeto, por extenso em português.
+    Injetada no system prompt a cada mensagem — o modelo não tem relógio
+    próprio, então sem isso ele chuta o ano (foi o que causou o bug de 2024).
+    """
+    tz = pytz.timezone(os.environ.get("TIMEZONE", "America/Sao_Paulo"))
+    agora = datetime.now(tz)
+    dia_semana = _DIAS[agora.weekday()]
+    return (f"Hoje é {dia_semana}, {agora.day} de {_MESES[agora.month - 1]} "
+            f"de {agora.year} ({agora.strftime('%d/%m/%Y')}), "
+            f"{agora.strftime('%H:%M')} no horário de São Paulo. "
+            f"Sempre que a pessoa disser 'hoje', 'ontem', 'esse mês', use esta "
+            f"data como referência. A data no formato ISO para registros é "
+            f"{agora.strftime('%Y-%m-%d')}.")
 
 
 def _client() -> Anthropic:
@@ -339,12 +364,14 @@ def processar_mensagem(user_id: int, texto: str, forcar_consultor: bool = False)
     history = _get_history(user_id)
     history.append({"role": "user", "content": texto})
 
+    system_com_data = f"{SYSTEM_PROMPT}\n\nDATA ATUAL:\n{_data_hoje()}"
+
     max_iteracoes = 8
     for _ in range(max_iteracoes):
         resp = _client().messages.create(
             model=MODELO_HAIKU,
             max_tokens=1024,
-            system=SYSTEM_PROMPT,
+            system=system_com_data,
             tools=TOOLS,
             messages=history,
         )
