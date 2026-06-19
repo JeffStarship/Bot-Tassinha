@@ -7,6 +7,36 @@ no banco diretamente.
 from database import get_client
 
 
+def normalizar_telefone(tel: str) -> str | None:
+    """
+    Normaliza telefone brasileiro pro formato wa.me: 55 + DDD + número, só dígitos.
+    Feito UMA vez no cadastro/atualização — o botão de WhatsApp só lê o que já
+    está limpo no banco.
+    Aceita formatos variados ((48) 99999-9999, 48999999999, +55 48 9..., etc).
+    Retorna None se não der pra extrair um número plausível.
+    """
+    if not tel:
+        return None
+    digitos = "".join(c for c in str(tel) if c.isdigit())
+    if not digitos:
+        return None
+    # remove zeros à esquerda (ex: 0 antes do DDD)
+    digitos = digitos.lstrip("0")
+    # já tem 55 na frente e tamanho de número completo (12-13 dígitos)
+    if digitos.startswith("55") and len(digitos) in (12, 13):
+        return digitos
+    # 10 (fixo DDD+8) ou 11 (cel DDD+9) dígitos -> adiciona 55
+    if len(digitos) in (10, 11):
+        return "55" + digitos
+    # 8 ou 9 dígitos (sem DDD) -> não dá pra montar wa.me confiável
+    if len(digitos) in (8, 9):
+        return None
+    # qualquer outra coisa: devolve como está se já parecer ter 55, senão None
+    if digitos.startswith("55") and len(digitos) >= 12:
+        return digitos
+    return None
+
+
 def buscar_cliente(nome: str) -> dict:
     """
     Busca cliente por nome (case-insensitive, busca parcial).
@@ -41,7 +71,7 @@ def criar_cliente(
     db = get_client()
     payload = {
         "nome": nome,
-        "telefone": telefone,
+        "telefone": normalizar_telefone(telefone) if telefone else None,
         "instagram": instagram,
         "canal_aquisicao": canal_aquisicao,
         "indicada_por_id": indicada_por_id,
@@ -60,6 +90,10 @@ def atualizar_cliente(cliente_id: str, campos: dict) -> dict:
     (ex: {"telefone": "...", "observacoes": "..."})
     """
     db = get_client()
+    # normaliza telefone se estiver sendo atualizado
+    if "telefone" in campos and campos["telefone"]:
+        campos = dict(campos)
+        campos["telefone"] = normalizar_telefone(campos["telefone"])
     resp = (
         db.table("clientes")
         .update(campos)

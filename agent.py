@@ -70,6 +70,8 @@ TOOL_REGISTRY = {
     "listar_agenda": atendimentos.listar_agenda,
     "atualizar_status_atendimento": atendimentos.atualizar_status_atendimento,
     "ajustar_inicio_atendimento": atendimentos.ajustar_inicio_atendimento,
+    "marcar_cancelamento": atendimentos.marcar_cancelamento,
+    "parar_de_avisar_reagendar": atendimentos.parar_de_avisar_reagendar,
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
@@ -363,6 +365,27 @@ TOOLS = [
             "type": "object",
             "properties": {"nome": {"type": "string"}},
             "required": ["nome"],
+        },
+    },
+    {
+        "name": "marcar_cancelamento",
+        "description": "Marca o próximo atendimento agendado de uma cliente como cancelado. Use quando a Tassia disser 'a Bruna cancelou'. Se ela já vai reagendar em seguida, passe reagendou=True. Se não reagendou, a cliente aparece no resumo diário até reagendar.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "reagendou": {"type": "boolean"},
+            },
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "parar_de_avisar_reagendar",
+        "description": "Para de mostrar uma cliente cancelada na lista de 'falta reagendar' do resumo diário. Use quando a Tassia disser 'pode parar de avisar da Bruna' ou 'não precisa mais lembrar de reagendar a Bruna'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"cliente_id": {"type": "string"}},
+            "required": ["cliente_id"],
         },
     },
     {

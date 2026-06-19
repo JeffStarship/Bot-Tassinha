@@ -60,24 +60,38 @@ def _ids() -> list[int]:
     return [int(x) for x in raw.split(",") if x.strip()]
 
 
-def _enviar(texto: str) -> None:
-    """Envia o texto pra todos os IDs da whitelist."""
+def _enviar(texto: str, botao_texto: str = None, botao_url: str = None) -> None:
+    """
+    Envia o texto pra todos os IDs da whitelist.
+    Se botao_texto e botao_url vierem, anexa um botão inline (ex: abrir wa.me).
+    """
+    from telegram import InlineKeyboardButton, InlineKeyboardMarkup
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     bot = Bot(token=token)
     ids = _ids()
     if not ids:
-        logger.warning("Nenhum ID na whitelist — resumo não enviado.")
+        logger.warning("Nenhum ID na whitelist — mensagem não enviada.")
         return
+
+    markup = None
+    if botao_texto and botao_url:
+        markup = InlineKeyboardMarkup([[InlineKeyboardButton(botao_texto, url=botao_url)]])
 
     async def _go():
         for uid in ids:
             try:
-                await bot.send_message(chat_id=uid, text=texto)
-                logger.info(f"Resumo enviado para {uid}")
+                await bot.send_message(chat_id=uid, text=texto, reply_markup=markup)
+                logger.info(f"Mensagem enviada para {uid}")
             except Exception:
                 logger.exception(f"Falha ao enviar para {uid}")
 
     asyncio.run(_go())
+
+
+def _link_whatsapp(telefone: str, mensagem: str) -> str:
+    """Monta o deep link wa.me com a mensagem pré-preenchida (URL-encoded)."""
+    from urllib.parse import quote
+    return f"https://wa.me/{telefone}?text={quote(mensagem)}"
 
 
 def _fmt_reais(v: float) -> str:
@@ -142,6 +156,20 @@ def montar_diario() -> str:
     if aniv:
         linhas.append("")
         linhas.append(aniv)
+
+    # Clientes que cancelaram e precisam reagendar
+    try:
+        db = get_client()
+        resp = db.rpc("pendentes_reagendar", {}).execute()
+        pend = resp.data or []
+        if pend:
+            linhas.append("")
+            linhas.append(f"Falta reagendar ({len(pend)}):")
+            linhas.append("\n".join(
+                f"- {p['nome']} (cancelou {p['servico']})" for p in pend[:10]
+            ))
+    except Exception:
+        logger.exception("diario: pendentes_reagendar falhou")
 
     return "\n".join(linhas)
 
@@ -377,6 +405,81 @@ def job_lembretes():
         logger.exception("job_lembretes: fim falhou")
 
 
+def _config(chave: str, default: str = "") -> str:
+    try:
+        db = get_client()
+        resp = db.table("config").select("valor").eq("chave", chave).execute()
+        if resp.data:
+            return resp.data[0]["valor"]
+    except Exception:
+        logger.exception(f"config {chave} falhou")
+    return default
+
+
+def _hora_fmt(hora_val) -> str:
+    # aceita "14:00:00" (string do Supabase) ou datetime.time
+    if hora_val is None:
+        return ""
+    s = str(hora_val)
+    return s[:5]
+
+
+def _disparar_followup(a: dict, modelo_chave: str, default_msg: str, marcar_rpc: str):
+    """Monta msg + botão wa.me e envia. Marca como avisado depois."""
+    db = get_client()
+    nome = a["nome"]
+    hora = _hora_fmt(a["hora"])
+    tel = a.get("telefone")
+    template = _config(modelo_chave, default_msg)
+    msg_cliente = template.replace("{nome}", nome).replace("{hora}", hora)
+
+    if tel:
+        texto = f"Follow-up: {nome} tem horário {('amanhã' if 'amanha' in modelo_chave or '1d' in modelo_chave else 'hoje')} às {hora}.\nMensagem pronta no botão abaixo."
+        link = _link_whatsapp(tel, msg_cliente)
+        _enviar(texto, botao_texto=f"Abrir WhatsApp da {nome}", botao_url=link)
+    else:
+        texto = (f"Follow-up: {nome} tem horário às {hora}, mas não tem telefone "
+                 f"cadastrado. Cadastre o número da {nome} pra ativar o botão de "
+                 f"WhatsApp nos próximos lembretes.")
+        _enviar(texto)
+
+    db.rpc(marcar_rpc, {"p_id": a["id"]}).execute()
+    logger.info(f"Follow-up ({modelo_chave}) enviado: {nome}")
+
+
+def job_followup_1dia():
+    """Roda 1x de manhã: follow-up das clientes agendadas pra amanhã."""
+    hoje = _hoje()
+    db = get_client()
+    try:
+        resp = db.rpc("followups_1dia", {"p_hoje": hoje.isoformat()}).execute()
+        for a in (resp.data or []):
+            _disparar_followup(a, "followup_1d_msg",
+                               "Oi {nome}! Passando pra confirmar seu horário amanhã às {hora}. Posso confirmar?",
+                               "marcar_followup_1d")
+    except Exception:
+        logger.exception("job_followup_1dia falhou")
+
+
+def job_followup_3horas():
+    """Roda a cada 5 min: follow-up das clientes ~3h antes do horário."""
+    agora = datetime.now(TZ)
+    hoje = agora.date()
+    db = get_client()
+    try:
+        resp = db.rpc("followups_3horas", {
+            "p_hoje": hoje.isoformat(),
+            "p_agora": agora.time().strftime("%H:%M:%S"),
+            "p_tolerancia_min": 5,
+        }).execute()
+        for a in (resp.data or []):
+            _disparar_followup(a, "followup_3h_msg",
+                               "Oi {nome}! Lembrete do seu horário hoje às {hora}. Está tudo certo?",
+                               "marcar_followup_3h")
+    except Exception:
+        logger.exception("job_followup_3horas falhou")
+
+
 def main():
     sched = BlockingScheduler(timezone=TZ)
     # Resumos: disparam 9h; cada um filtra o próprio dia internamente.
@@ -385,7 +488,11 @@ def main():
     sched.add_job(job_mensal, "cron", hour=9, minute=0, id="mensal")
     # Lembretes de início/fim: verifica a cada 5 minutos ao longo do dia.
     sched.add_job(job_lembretes, "interval", minutes=5, id="lembretes")
-    logger.info("Scheduler Tassinha iniciado (resumos 9h + lembretes início/fim a cada 5min — SP).")
+    # Follow-up de 1 dia antes: 1x de manhã (8h).
+    sched.add_job(job_followup_1dia, "cron", hour=8, minute=0, id="followup_1dia")
+    # Follow-up de 3h antes: verifica a cada 5 minutos.
+    sched.add_job(job_followup_3horas, "interval", minutes=5, id="followup_3h")
+    logger.info("Scheduler Tassinha iniciado (resumos 9h + lembretes 5min + follow-ups — SP).")
     sched.start()
 
 

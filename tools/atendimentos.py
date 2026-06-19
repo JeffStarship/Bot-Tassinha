@@ -166,3 +166,54 @@ def ajustar_inicio_atendimento(
         return {"ok": True, "acao": "inicio_ajustado", "hora_inicio": hora_inicio}
 
     return {"ok": False, "erro": "diga se ainda não começou ou a que horas começou"}
+
+
+def marcar_cancelamento(cliente_id: str, reagendou: bool = False) -> dict:
+    """
+    Marca o atendimento agendado de uma cliente como cancelado.
+    Use quando a Tassia disser "a Bruna cancelou".
+    - reagendou=False: marca precisa_reagendar=True (aparece no diário das 9h
+      até reagendar ou a Tassia mandar parar de avisar).
+    - reagendou=True: só cancela, sem entrar na lista de pendência (a Tassia
+      vai agendar o novo horário em seguida).
+    Cancela o próximo agendamento futuro da cliente.
+    """
+    from datetime import date
+    db = get_client()
+    hoje = date.today().isoformat()
+    resp = (
+        db.table("atendimentos")
+        .select("id, data, hora")
+        .eq("cliente_id", cliente_id)
+        .eq("status", "agendado")
+        .gte("data", hoje)
+        .order("data")
+        .execute()
+    )
+    if not resp.data:
+        return {"ok": False, "erro": "nenhum atendimento agendado futuro pra essa cliente"}
+    atendimento_id = resp.data[0]["id"]
+    db.table("atendimentos").update({
+        "status": "cancelado",
+        "precisa_reagendar": (not reagendou),
+    }).eq("id", atendimento_id).execute()
+    return {"ok": True, "cancelado": True,
+            "precisa_reagendar": (not reagendou)}
+
+
+def parar_de_avisar_reagendar(cliente_id: str) -> dict:
+    """
+    Para de mostrar uma cliente cancelada na lista de 'precisa reagendar' do
+    resumo diário. Use quando a Tassia disser algo como "pode parar de avisar
+    da Bruna" / "não precisa mais lembrar de reagendar a Bruna".
+    """
+    db = get_client()
+    resp = (
+        db.table("atendimentos")
+        .update({"precisa_reagendar": False})
+        .eq("cliente_id", cliente_id)
+        .eq("precisa_reagendar", True)
+        .execute()
+    )
+    n = len(resp.data) if resp.data else 0
+    return {"ok": True, "limpos": n}
