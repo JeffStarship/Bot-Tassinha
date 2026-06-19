@@ -17,7 +17,7 @@ import pytz
 from anthropic import Anthropic
 
 from tools import clientes, atendimentos, pagamentos, indicacoes
-from tools import metricas, risco, financeiro
+from tools import metricas, risco, financeiro, servicos
 import consultor
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,10 @@ TOOL_REGISTRY = {
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
+    # Sessão 5 — serviços/preços
+    "cadastrar_servico": servicos.cadastrar_servico,
+    "listar_servicos": servicos.listar_servicos,
+    "buscar_preco_servico": servicos.buscar_preco_servico,
     # Sessão 3 — métricas
     "faturamento": metricas.faturamento,
     "no_show_rate": metricas.no_show_rate,
@@ -132,12 +136,13 @@ TOOLS = [
     },
     {
         "name": "registrar_atendimento",
-        "description": "Registra um atendimento realizado. Use depois de confirmar qual cliente_id é o correto.",
+        "description": "Registra um atendimento realizado. Use depois de confirmar qual cliente_id é o correto. Se a Tassia disser só o nome do serviço sem o valor, use buscar_preco_servico antes pra puxar o preço do catálogo.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "cliente_id": {"type": "string"},
                 "data": {"type": "string", "description": "formato YYYY-MM-DD"},
+                "hora": {"type": "string", "description": "formato HH:MM, opcional"},
                 "servico": {"type": "string"},
                 "valor": {"type": "number"},
                 "duracao_min": {"type": "integer"},
@@ -153,13 +158,16 @@ TOOLS = [
     },
     {
         "name": "agendar",
-        "description": "Agenda um atendimento futuro, sem valor definido ainda.",
+        "description": "Agenda um atendimento futuro. Sempre tente capturar a HORA — os lembretes de início/fim e os follow-ups dependem dela. Se o serviço estiver no catálogo, use buscar_preco_servico pra preencher valor e duração.",
         "input_schema": {
             "type": "object",
             "properties": {
                 "cliente_id": {"type": "string"},
                 "data": {"type": "string", "description": "formato YYYY-MM-DD"},
+                "hora": {"type": "string", "description": "formato HH:MM — importante pros lembretes"},
                 "servico": {"type": "string"},
+                "valor": {"type": "number", "description": "puxe do catálogo se possível"},
+                "duracao_min": {"type": "integer"},
             },
             "required": ["cliente_id", "data"],
         },
@@ -315,6 +323,33 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {"mes_referencia": {"type": "string", "description": "AAAA-MM, default mês atual"}},
+        },
+    },
+    {
+        "name": "cadastrar_servico",
+        "description": "Cadastra ou atualiza UM serviço no catálogo de preços. Quando a Tassia mandar vários serviços de uma vez (ex: 'alongamento 150, manutenção 90, banho de gel 70'), chame esta ferramenta uma vez para cada serviço. Se o serviço já existe, o preço é atualizado.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "nome": {"type": "string"},
+                "preco": {"type": "number"},
+                "duracao_min": {"type": "integer", "description": "opcional, default 90"},
+            },
+            "required": ["nome", "preco"],
+        },
+    },
+    {
+        "name": "listar_servicos",
+        "description": "Lista todos os serviços do catálogo com preço e duração. Use quando a Tassia pedir pra ver a tabela de preços.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "buscar_preco_servico",
+        "description": "Busca o preço de um serviço pelo nome. Use ao registrar atendimento quando a Tassia disser só o serviço sem o valor. Se achar 1, use o preço. Se achar vários, pergunte qual. Se não achar, ofereça cadastrar perguntando o preço.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"nome": {"type": "string"}},
+            "required": ["nome"],
         },
     },
     {
