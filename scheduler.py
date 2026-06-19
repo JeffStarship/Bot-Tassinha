@@ -428,23 +428,25 @@ def _disparar_followup(a: dict, modelo_chave: str, default_msg: str, marcar_rpc:
     """Monta msg + botão wa.me e envia. Marca como avisado depois."""
     db = get_client()
     nome = a["nome"]
+    primeiro_nome = nome.split()[0] if nome else nome
     hora = _hora_fmt(a["hora"])
     tel = a.get("telefone")
     template = _config(modelo_chave, default_msg)
     msg_cliente = template.replace("{nome}", nome).replace("{hora}", hora)
+    quando = "amanhã" if ("amanha" in modelo_chave or "1d" in modelo_chave) else "hoje"
 
     if tel:
-        texto = f"Follow-up: {nome} tem horário {('amanhã' if 'amanha' in modelo_chave or '1d' in modelo_chave else 'hoje')} às {hora}.\nMensagem pronta no botão abaixo."
+        texto = f"Lembrete: {nome} tem horário {quando} às {hora}.\nMensagem pronta no botão abaixo."
         link = _link_whatsapp(tel, msg_cliente)
-        _enviar(texto, botao_texto=f"Abrir WhatsApp da {nome}", botao_url=link)
+        _enviar(texto, botao_texto=f"Mandar lembrete WhatsApp {primeiro_nome}", botao_url=link)
     else:
-        texto = (f"Follow-up: {nome} tem horário às {hora}, mas não tem telefone "
-                 f"cadastrado. Cadastre o número da {nome} pra ativar o botão de "
-                 f"WhatsApp nos próximos lembretes.")
+        texto = (f"Lembrete: {nome} tem horário {quando} às {hora}, mas não tem "
+                 f"telefone cadastrado. Cadastre o número da {primeiro_nome} pra "
+                 f"ativar o botão de WhatsApp nos próximos lembretes.")
         _enviar(texto)
 
     db.rpc(marcar_rpc, {"p_id": a["id"]}).execute()
-    logger.info(f"Follow-up ({modelo_chave}) enviado: {nome}")
+    logger.info(f"Lembrete ({modelo_chave}) enviado: {nome}")
 
 
 def job_followup_1dia():
