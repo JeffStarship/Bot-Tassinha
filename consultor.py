@@ -13,9 +13,9 @@ Se a chamada ao Sonnet falhar (cota, rede), retorna fallback gracioso.
 """
 import os
 import logging
-from datetime import date, timedelta
 from anthropic import Anthropic
-from database import get_client
+
+from tools import metricas, risco, financeiro
 
 logger = logging.getLogger(__name__)
 
@@ -35,86 +35,83 @@ with open("prompts/consultor_prompt.txt", "r", encoding="utf-8") as f:
 
 def _montar_contexto_dados() -> str:
     """
-    Lê dados reais do banco pra dar contexto ao consultor.
-    Robusto: cada bloco é independente — se um falhar, os outros seguem.
-    Quando a Sessão 3 adicionar tools de métrica mais ricas, dá pra
-    substituir essas queries diretas pelas ferramentas.
+    Monta o pacote de dados reais que o consultor usa pra analisar.
+    Agora consome as MESMAS ferramentas do agente (Sessão 3) — os números
+    nascem do SQL via RPC, idênticos aos que a Tassinha vê no dia a dia.
+    Cada bloco é independente: se uma ferramenta falhar, as outras seguem.
     """
-    db = get_client()
-    hoje = date.today()
-    inicio_mes = hoje.replace(day=1)
     partes = []
 
-    # Faturamento e atendimentos do mês atual
+    # Faturamento, ticket e volume do mês
     try:
-        atend = (
-            db.table("atendimentos")
-            .select("valor, status, data, cliente_id")
-            .gte("data", inicio_mes.isoformat())
-            .eq("status", "concluido")
-            .execute()
-        )
-        total = sum(float(a["valor"]) for a in atend.data)
-        qtd = len(atend.data)
-        ticket = round(total / qtd, 2) if qtd else 0
+        f = metricas.faturamento()
         partes.append(
-            f"Mês atual ({inicio_mes.strftime('%m/%Y')}): "
-            f"{qtd} atendimentos concluídos, faturamento R${total:.2f}, "
-            f"ticket médio R${ticket:.2f}."
+            f"Mês atual: {f['qtd_atendimentos']} atendimentos concluídos, "
+            f"faturamento R${f['faturamento']:.2f}, ticket médio R${f['ticket_medio']:.2f}."
         )
     except Exception as e:
         logger.warning(f"contexto faturamento falhou: {e}")
-        partes.append("Não consegui ler o faturamento do mês.")
 
-    # No-shows do mês
+    # Saldo do mês (faturamento - despesas)
     try:
-        noshow = (
-            db.table("atendimentos")
-            .select("id", count="exact")
-            .gte("data", inicio_mes.isoformat())
-            .eq("status", "no_show")
-            .execute()
-        )
-        partes.append(f"No-shows no mês: {noshow.count or 0}.")
+        s = financeiro.saldo_mes()
+        if "saldo" in s:
+            sinal = "positivo" if s["saldo"] >= 0 else "NEGATIVO (no vermelho)"
+            partes.append(
+                f"Saldo do mês: R${s['saldo']:.2f} ({sinal}) — "
+                f"despesas totais R${s['despesas']:.2f}."
+            )
+    except Exception as e:
+        logger.warning(f"contexto saldo falhou: {e}")
+
+    # No-show do mês
+    try:
+        n = metricas.no_show_rate()
+        partes.append(f"No-shows no mês: {n['no_shows']} (taxa {n['taxa_pct']}% sobre {n['base']}).")
     except Exception as e:
         logger.warning(f"contexto noshow falhou: {e}")
 
-    # Total de clientes e status
+    # Taxa de retorno — métrica central
     try:
-        clientes = db.table("clientes").select("status").execute()
-        total_cli = len(clientes.data)
-        ativas = sum(1 for c in clientes.data if c["status"] == "ativa")
-        partes.append(f"Base de clientes: {total_cli} no total, {ativas} ativas.")
+        t = metricas.taxa_retorno()
+        if t.get("clientes_com_atendimento", 0) > 0:
+            partes.append(
+                f"Taxa de retorno: {t['taxa_pct']}% "
+                f"({t['clientes_que_retornaram']} de {t['clientes_com_atendimento']} clientes voltaram 2+ vezes)."
+            )
     except Exception as e:
-        logger.warning(f"contexto clientes falhou: {e}")
+        logger.warning(f"contexto retorno falhou: {e}")
 
-    # Clientes sem voltar há mais de 30 dias (proxy simples de risco até a Sessão 3)
+    # Mix de canal
     try:
-        limite = (hoje - timedelta(days=30)).isoformat()
-        # último atendimento por cliente — leitura simples
-        todos = (
-            db.table("atendimentos")
-            .select("cliente_id, data")
-            .eq("status", "concluido")
-            .order("data", desc=True)
-            .execute()
-        )
-        ultimo_por_cliente = {}
-        for a in todos.data:
-            cid = a["cliente_id"]
-            if cid not in ultimo_por_cliente:
-                ultimo_por_cliente[cid] = a["data"]
-        em_risco = sum(1 for d in ultimo_por_cliente.values() if d < limite)
-        partes.append(
-            f"Clientes que não voltam há mais de 30 dias: {em_risco}."
-        )
+        m = mix = metricas.mix_canal()
+        if m.get("canais"):
+            top = ", ".join(f"{c['canal']} {c['pct']}%" for c in m["canais"][:4])
+            partes.append(f"Aquisição por canal: {top}.")
+    except Exception as e:
+        logger.warning(f"contexto mix falhou: {e}")
+
+    # Clientes em risco — com nomes pra o consultor poder ser específico
+    try:
+        r = risco.clientes_em_risco()
+        if r["total"] > 0:
+            nomes = ", ".join(
+                f"{c['nome']} ({c['dias_desde_ultimo']}d sem voltar, "
+                f"cadência {c['cadencia_dias'] or '?'}d, confiança {c['confianca']})"
+                for c in r["clientes"][:8]
+            )
+            partes.append(f"{r['total']} cliente(s) em risco: {nomes}.")
+        else:
+            partes.append("Nenhuma cliente em risco no momento.")
     except Exception as e:
         logger.warning(f"contexto risco falhou: {e}")
 
     if not partes:
-        return "ATENÇÃO: não consegui ler nenhum dado do banco. Avise que a análise está sem base de dados e não invente números."
+        return ("ATENÇÃO: não consegui ler nenhum dado do banco. Avise que a "
+                "análise está sem base de dados e não invente números.")
 
-    return "DADOS REAIS DO NEGÓCIO (use só estes números, não invente outros):\n" + "\n".join(f"- {p}" for p in partes)
+    return ("DADOS REAIS DO NEGÓCIO (use só estes números, não invente outros):\n"
+            + "\n".join(f"- {p}" for p in partes))
 
 
 def consultar(pergunta: str) -> str:

@@ -15,6 +15,7 @@ import logging
 from anthropic import Anthropic
 
 from tools import clientes, atendimentos, pagamentos, indicacoes
+from tools import metricas, risco, financeiro
 import consultor
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,20 @@ TOOL_REGISTRY = {
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
+    # Sessão 3 — métricas
+    "faturamento": metricas.faturamento,
+    "no_show_rate": metricas.no_show_rate,
+    "mix_canal": metricas.mix_canal,
+    "taxa_retorno": metricas.taxa_retorno,
+    # Sessão 3 — risco e cadência
+    "clientes_em_risco": risco.clientes_em_risco,
+    "cadencia_cliente": risco.cadencia_cliente,
+    "ranking_inatividade": risco.ranking_inatividade,
+    # Sessão 3 — financeiro
+    "registrar_despesa": financeiro.registrar_despesa,
+    "despesas_recorrentes": financeiro.despesas_recorrentes,
+    "despesas_do_mes": financeiro.despesas_do_mes,
+    "saldo_mes": financeiro.saldo_mes,
     "escalar_para_consultor": lambda pergunta: {"resposta_consultor": consultor.consultar(pergunta)},
 }
 
@@ -186,6 +201,95 @@ TOOLS = [
                 "data": {"type": "string", "description": "YYYY-MM-DD"},
             },
             "required": ["indicadora_id", "indicada_id", "data"],
+        },
+    },
+    {
+        "name": "faturamento",
+        "description": "Faturamento, número de atendimentos concluídos e ticket médio de um mês. Use pra perguntas tipo 'quanto faturei esse mês', 'qual meu ticket médio'. Sem mês informado, usa o mês atual.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mes_referencia": {"type": "string", "description": "mês no formato AAAA-MM. Opcional — default é o mês atual."}
+            },
+        },
+    },
+    {
+        "name": "no_show_rate",
+        "description": "Taxa de no-show (faltas) de um mês, em %. Base = atendimentos concluídos + no-shows. Use pra 'quantas faltas tive', 'minha taxa de no-show'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "mes_referencia": {"type": "string", "description": "AAAA-MM. Opcional — default mês atual."}
+            },
+        },
+    },
+    {
+        "name": "mix_canal",
+        "description": "Distribuição da base de clientes por canal de aquisição (indicação, instagram, marketplace, etc) com quantidade e %. Use pra 'de onde vêm minhas clientes', 'qual canal traz mais gente'.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "taxa_retorno",
+        "description": "Taxa de retorno: % de clientes que voltaram (2+ atendimentos) sobre as que vieram ao menos 1 vez. Métrica central do negócio recorrente. Use pra 'minhas clientes estão voltando', 'taxa de retenção'.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "clientes_em_risco",
+        "description": "Lista clientes que estão passando do tempo normal de voltar (em risco de sumir), da mais atrasada pra menos. Considera a cadência individual de cada uma. Use pra 'quem está sumindo', 'quem eu preciso chamar de volta', 'clientes em risco'.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "cadencia_cliente",
+        "description": "De quantos em quantos dias UMA cliente específica costuma voltar, com nível de confiança (fraca/media/solida) pela quantidade de visitas. Use o cliente_id de buscar_cliente. Use pra 'de quanto em quanto tempo a Fulana volta'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"cliente_id": {"type": "string"}},
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "ranking_inatividade",
+        "description": "Lista as clientes pela inatividade (há mais tempo sem voltar primeiro). Foto geral pra decidir quem reativar. Use pra 'quem está há mais tempo sem aparecer', 'lista de inativas'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"limite": {"type": "integer", "description": "quantas trazer, default 20"}},
+        },
+    },
+    {
+        "name": "registrar_despesa",
+        "description": "Registra uma despesa do negócio. Use recorrente=true pra custo fixo mensal (aluguel, etc). Use pra 'paguei X de material', 'lança aluguel de 500 todo mês'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "descricao": {"type": "string"},
+                "valor": {"type": "number"},
+                "categoria": {"type": "string", "enum": ["aluguel", "material", "marketing", "transporte", "contas", "outros"]},
+                "data": {"type": "string", "description": "AAAA-MM-DD, default hoje"},
+                "recorrente": {"type": "boolean"},
+                "dia_recorrencia": {"type": "integer", "description": "dia do mês que repete, só pra recorrente"},
+            },
+            "required": ["descricao", "valor"],
+        },
+    },
+    {
+        "name": "despesas_recorrentes",
+        "description": "Lista as despesas fixas mensais ativas e o total. Use pra 'quais meus custos fixos', 'quanto gasto fixo por mês'.",
+        "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "despesas_do_mes",
+        "description": "Total de despesas de um mês, separando pontuais de recorrentes. Use pra 'quanto gastei esse mês'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"mes_referencia": {"type": "string", "description": "AAAA-MM, default mês atual"}},
+        },
+    },
+    {
+        "name": "saldo_mes",
+        "description": "Saldo do mês: faturamento menos despesas. Saldo negativo = mês no vermelho. Use pra 'fechei no azul esse mês', 'qual meu lucro', 'sobrou quanto'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"mes_referencia": {"type": "string", "description": "AAAA-MM, default mês atual"}},
         },
     },
     {
