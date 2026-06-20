@@ -76,10 +76,61 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Conversa reiniciada. Pode começar de novo.")
 
 
+AJUDA_TEXTO = """Oi! Eu sou seu assistente. Você fala comigo em português normal, como se tivesse mandando mensagem pra alguém. Não precisa de comando nem formato certo. Algumas coisas que eu faço:
+
+CLIENTES E ATENDIMENTOS
+- "cadastra a Bruna, telefone (48) 99999-0000, veio por indicação"
+- "atendi a Bruna hoje, manutenção" (eu puxo o preço sozinho)
+- "agenda a Bruna pra sexta às 15h, alongamento"
+- "a Bruna cancelou" / "a Bruna cancelou mas já vou remarcar"
+
+PREÇOS
+- "cadastra os serviços: alongamento 150, manutenção 90, banho de gel 70"
+- "me mostra a tabela de preços"
+- quando mudar um preço, é só mandar de novo
+
+DINHEIRO
+- "qual meu saldo esse mês?"
+- "quanto faturei esse mês?"
+- "lança 80 de material" / "aluguel de 500 todo mês"
+
+CLIENTES SUMINDO
+- "quem tá em risco de sumir?"
+- "de quanto em quanto tempo a Bruna costuma voltar?"
+
+INDICAÇÕES
+- "a Bruna indicou a Fernanda"
+- "quantas a Bruna indicou?"
+- "quem mais me indicou clientes?"
+
+LEMBRETES DAS CLIENTES (você escolhe)
+- "pra Bruna, manda o lembrete 2 horas antes"
+- "não manda lembrete pra Bruna"
+- "volta a Bruna pro padrão"
+
+NO MEIO DO ATENDIMENTO
+- "a Bruna ainda não começou" / "a Bruna começou às 15h"
+
+TODO DIA às 9h eu te mando um resumo. Domingo um resumo da semana, e dia 1º um do mês.
+
+Se quiser um conselho mais pensado sobre o negócio, escreve /consultor e a pergunta. Ex: /consultor tô indo bem esse mês?
+
+Qualquer dúvida, é só me perguntar do seu jeito."""
+
+
+async def cmd_ajuda(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    user_id = update.effective_user.id
+    if not _autorizado(user_id):
+        return
+    await update.message.reply_text(AJUDA_TEXTO)
+
+
 def main() -> None:
     token = os.environ["TELEGRAM_BOT_TOKEN"]
     app = Application.builder().token(token).build()
 
+    app.add_handler(CommandHandler("ajuda", cmd_ajuda))
+    app.add_handler(CommandHandler("start", cmd_ajuda))
     app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CommandHandler("consultor", cmd_consultor))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))

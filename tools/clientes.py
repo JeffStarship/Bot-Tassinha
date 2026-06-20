@@ -1,6 +1,6 @@
 """
 Ferramentas relacionadas a clientes: buscar, criar, atualizar.
-Cada função aqui é exposta ao agente como uma "tool" que o Gemini
+Cada função aqui é exposta ao agente como uma "tool" que o modelo
 pode chamar. Toda escrita/leitura passa por aqui — a IA nunca toca
 no banco diretamente.
 """

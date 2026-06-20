@@ -488,8 +488,13 @@ def job_followup_1dia():
         logger.exception("job_followup_1dia falhou")
 
 
-def job_followup_3horas():
-    """Roda a cada 5 min: follow-up N horas antes (configurável por cliente)."""
+def job_followup_horas():
+    """
+    Roda a cada 5 min: follow-up N horas antes do horário.
+    O 'N' é configurável por cliente (preferência followup_3h_horas, default 3).
+    Obs: as chaves followup_3h_* mantêm o nome histórico '3h' por já estarem
+    gravadas no banco/config — o valor em si é configurável, não fixo em 3.
+    """
     agora = datetime.now(TZ)
     hoje = agora.date()
     db = get_client()
@@ -506,7 +511,7 @@ def job_followup_3horas():
                                "Oi {nome}! Lembrete do seu horário hoje às {hora}. Está tudo certo?",
                                "marcar_followup_3h", "followup_3h_texto", quando)
     except Exception:
-        logger.exception("job_followup_3horas falhou")
+        logger.exception("job_followup_horas falhou")
 
 
 def main():
@@ -519,8 +524,8 @@ def main():
     sched.add_job(job_lembretes, "interval", minutes=5, id="lembretes")
     # Follow-up de 1 dia antes: 1x de manhã (8h).
     sched.add_job(job_followup_1dia, "cron", hour=8, minute=0, id="followup_1dia")
-    # Follow-up de 3h antes: verifica a cada 5 minutos.
-    sched.add_job(job_followup_3horas, "interval", minutes=5, id="followup_3h")
+    # Follow-up de N horas antes (configurável por cliente): verifica a cada 5 min.
+    sched.add_job(job_followup_horas, "interval", minutes=5, id="followup_horas")
     logger.info("Scheduler Tassinha iniciado (resumos 9h + lembretes 5min + follow-ups — SP).")
     sched.start()
 
