@@ -93,6 +93,9 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         )
 
     await update.message.reply_text(resposta)
+
+
+async def cmd_consultor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Válvula manual: força escalada pro consultor (Sonnet)."""
     user_id = update.effective_user.id
     if not _autorizado(user_id):
