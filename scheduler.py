@@ -235,6 +235,24 @@ def montar_semanal() -> str:
     except Exception:
         logger.exception("semanal: risco falhou")
 
+    # Produtos pra repor (estoque inteligente — só aparece se houver)
+    try:
+        resp = db.rpc("produtos_para_repor", {"p_limiar_pct": 75}).execute()
+        repor = resp.data or []
+        if repor:
+            linhas.append("")
+            linhas.append("Produtos pra repor em breve:")
+            for p in repor[:10]:
+                pct = int(float(p["consumo_estimado_pct"]))
+                media = float(p["media_atend_por_unidade"]) if p["media_atend_por_unidade"] else 0
+                feitos = int(p["atend_desde_ultima"])
+                linhas.append(
+                    f"- {p['nome']}: ~{pct}% consumido "
+                    f"(costuma durar ~{media:.0f} atendimentos, já fez {feitos} desde a última compra)"
+                )
+    except Exception:
+        logger.exception("semanal: produtos_para_repor falhou")
+
     # Dica do consultor só se caiu (faturamento OU atendimentos)
     if _caiu(fat_a, fat_b) or _caiu(qtd_a, qtd_b):
         dica = _dica_consultor(

@@ -17,7 +17,7 @@ import pytz
 from anthropic import Anthropic
 
 from tools import clientes, atendimentos, pagamentos, indicacoes
-from tools import metricas, risco, financeiro, servicos, preferencias
+from tools import metricas, risco, financeiro, servicos, preferencias, produtos
 import consultor
 
 logger = logging.getLogger(__name__)
@@ -76,6 +76,12 @@ TOOL_REGISTRY = {
     "definir_followup_cliente": preferencias.definir_followup_cliente,
     "resetar_followup_cliente": preferencias.resetar_followup_cliente,
     "ver_followup_cliente": preferencias.ver_followup_cliente,
+    # Sessão 11 — produtos / estoque inteligente
+    "registrar_compra": produtos.registrar_compra,
+    "previsao_produto": produtos.previsao_produto,
+    "gasto_produto": produtos.gasto_produto,
+    "precos_por_loja": produtos.precos_por_loja,
+    "listar_produtos": produtos.listar_produtos,
     "registrar_pagamento": pagamentos.registrar_pagamento,
     "saldo_atendimento": pagamentos.saldo_atendimento,
     "registrar_indicacao": indicacoes.registrar_indicacao,
@@ -454,6 +460,54 @@ TOOLS = [
             "properties": {"cliente_id": {"type": "string"}},
             "required": ["cliente_id"],
         },
+    },
+    {
+        "name": "registrar_compra",
+        "description": "Registra a compra de um produto (insumo). Cria o produto se não existir. A Tassia diz o que comprou, quanto pagou, quantos e onde. Ex: 'comprei 3 potes de gel a 50 reais na Loja A'. O sistema aprende sozinho de quanto em quanto tempo/atendimentos o produto acaba, pelas recompras.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "produto": {"type": "string"},
+                "preco_unitario": {"type": "number", "description": "preço de UMA unidade"},
+                "quantidade": {"type": "number", "description": "quantas unidades, default 1"},
+                "loja": {"type": "string"},
+                "data_compra": {"type": "string", "description": "YYYY-MM-DD, default hoje"},
+                "unidade": {"type": "string", "description": "pote, frasco, etc — opcional"},
+            },
+            "required": ["produto", "preco_unitario"],
+        },
+    },
+    {
+        "name": "previsao_produto",
+        "description": "Mostra quanto um produto costuma durar (em atendimentos e dias) e quanto já foi consumido desde a última compra. Use pra 'quando o gel vai acabar', 'preciso comprar mais esmalte?'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"produto": {"type": "string"}},
+            "required": ["produto"],
+        },
+    },
+    {
+        "name": "gasto_produto",
+        "description": "Quanto a Tassia já gastou com um produto no total. Use pra 'quanto já gastei em gel'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"produto": {"type": "string"}},
+            "required": ["produto"],
+        },
+    },
+    {
+        "name": "precos_por_loja",
+        "description": "Mostra o preço de um produto por loja (onde está mais barato). Use quando a Tassia for comprar: 'onde o gel tá mais barato', 'quanto paguei de esmalte da última vez'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"produto": {"type": "string"}},
+            "required": ["produto"],
+        },
+    },
+    {
+        "name": "listar_produtos",
+        "description": "Lista todos os produtos cadastrados. Use pra 'quais produtos eu tenho cadastrados'.",
+        "input_schema": {"type": "object", "properties": {}},
     },
     {
         "name": "escalar_para_consultor",
