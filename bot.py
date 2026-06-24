@@ -95,6 +95,60 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     await update.message.reply_text(resposta)
 
 
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Foto: baixa, converte pra base64 e manda pro modelo interpretar."""
+    user_id = update.effective_user.id
+    if not _autorizado(user_id):
+        logger.warning(f"Foto ignorada de ID não autorizado: {user_id}")
+        return
+
+    await update.message.chat.send_action(action="typing")
+
+    import base64
+    # photo é lista de tamanhos; o último é o de maior resolução
+    foto = update.message.photo[-1] if update.message.photo else None
+    # se vier como documento de imagem (sem compressão), trata também
+    if foto is None and update.message.document and \
+       (update.message.document.mime_type or "").startswith("image/"):
+        doc = update.message.document
+        media_type = doc.mime_type
+        file_id = doc.file_id
+    elif foto is not None:
+        media_type = "image/jpeg"  # Telegram entrega foto comprimida como jpeg
+        file_id = foto.file_id
+    else:
+        await update.message.reply_text("Não consegui pegar essa imagem. Tenta de novo.")
+        return
+
+    legenda = (update.message.caption or "").strip()
+
+    try:
+        arquivo = await context.bot.get_file(file_id)
+        ba = await arquivo.download_as_bytearray()
+        imagem_b64 = base64.b64encode(bytes(ba)).decode("utf-8")
+    except Exception:
+        logger.exception("Erro ao baixar imagem")
+        await update.message.reply_text(
+            "Não consegui baixar a imagem. Tenta mandar de novo."
+        )
+        return
+
+    logger.info(f"Imagem recebida de {user_id} ({len(imagem_b64)} b64, legenda: {legenda[:40]!r})")
+
+    try:
+        resposta = processar_mensagem(
+            user_id, legenda, imagem_b64=imagem_b64, imagem_media_type=media_type
+        )
+    except Exception:
+        logger.exception("Erro ao processar imagem")
+        resposta = (
+            "Recebi a imagem mas deu um erro processando. Tenta de novo, ou me "
+            "manda a informação por texto/áudio."
+        )
+
+    await update.message.reply_text(resposta)
+
+
 async def cmd_consultor(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Válvula manual: força escalada pro consultor (Sonnet)."""
     user_id = update.effective_user.id
@@ -126,7 +180,7 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text("Conversa reiniciada. Pode começar de novo.")
 
 
-AJUDA_TEXTO = """Oi! Eu sou seu assistente. Você fala comigo em português normal, como se tivesse mandando mensagem pra alguém — pode escrever OU mandar áudio, como preferir. Não precisa de comando nem formato certo. Algumas coisas que eu faço:
+AJUDA_TEXTO = """Oi! Eu sou seu assistente. Você fala comigo em português normal, como se tivesse mandando mensagem pra alguém — pode escrever, mandar áudio OU foto, como preferir. Não precisa de comando nem formato certo. Algumas coisas que eu faço:
 
 CLIENTES E ATENDIMENTOS
 - "cadastra a Bruna, telefone (48) 99999-0000, veio por indicação"
@@ -185,6 +239,7 @@ def main() -> None:
     app.add_handler(CommandHandler("consultor", cmd_consultor))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO, handle_voice))
+    app.add_handler(MessageHandler(filters.PHOTO | filters.Document.IMAGE, handle_photo))
 
     logger.info("Bot Tassinha iniciado (Haiku + roteamento Sonnet).")
     app.run_polling()

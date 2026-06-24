@@ -545,16 +545,36 @@ def reset_session(user_id: int) -> None:
     _sessions.pop(user_id, None)
 
 
-def processar_mensagem(user_id: int, texto: str, forcar_consultor: bool = False) -> str:
+def processar_mensagem(user_id: int, texto: str, forcar_consultor: bool = False,
+                       imagem_b64: str = None, imagem_media_type: str = None) -> str:
     """
     Roda o loop de tool calling até o Haiku dar a resposta final.
     Se forcar_consultor=True (comando /consultor), escala direto pro Sonnet.
+    Se imagem_b64 vier preenchido, manda a imagem junto pro modelo interpretar
+    (o Claude enxerga imagem nativamente — extrai contato, comprovante, cupom,
+    print de conversa, etc, e usa as tools normais).
     """
     if forcar_consultor:
         return consultor.consultar(texto)
 
     history = _get_history(user_id)
-    history.append({"role": "user", "content": texto})
+
+    if imagem_b64:
+        # mensagem multimodal: imagem + texto no mesmo turno
+        conteudo = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": imagem_media_type or "image/jpeg",
+                    "data": imagem_b64,
+                },
+            },
+            {"type": "text", "text": texto or "Interprete esta imagem e me ajude com o que for relevante."},
+        ]
+        history.append({"role": "user", "content": conteudo})
+    else:
+        history.append({"role": "user", "content": texto})
 
     system_com_data = f"{SYSTEM_PROMPT}\n\nDATA ATUAL:\n{_data_hoje()}"
 
