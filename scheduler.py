@@ -371,20 +371,60 @@ def _eh_manutencao(servico: str) -> bool:
     return "manuten" in (servico or "").lower()
 
 
-def montar_msg_inicio(nome: str, servico: str) -> str:
-    return f"O atendimento da {nome} está começando agora ({servico})."
+def _texto_pagamento(atendimento_id: str, explicativo: bool = False) -> str:
+    """
+    Retorna a nota de sinal/pagamento pra anexar às mensagens.
+    explicativo=True (início/fim): 'Sinal de R$X pago, falta receber R$Y'.
+    explicativo=False (follow/resumo): '(sinal de R$X pago, falta R$Y)'.
+    Retorna '' se não houver sinal (nem nota).
+    """
+    try:
+        db = get_client()
+        r = db.rpc("estado_pagamento", {"p_atendimento_id": atendimento_id}).execute()
+        if not r.data:
+            return ""
+        d = r.data[0]
+        estado = d["estado"]
+        pago = float(d["pago"])
+        falta = float(d["falta"])
+        if estado == "integral" or d.get("pago_integral"):
+            return ("Esse atendimento já está todo pago." if explicativo
+                    else "(já está tudo pago)")
+        if estado == "sem_sinal" or pago <= 0:
+            return ""
+        # parcial
+        if explicativo:
+            return f"Sinal de R$ {pago:.2f} pago, falta receber R$ {falta:.2f}."
+        return f"(sinal de R$ {pago:.2f} pago, falta R$ {falta:.2f})"
+    except Exception:
+        logger.exception("_texto_pagamento falhou")
+        return ""
 
 
-def montar_msg_fim(nome: str, servico: str) -> str:
+def montar_msg_inicio(nome: str, servico: str, atendimento_id: str = None) -> str:
+    base = f"O atendimento da {nome} está começando agora ({servico})."
+    if atendimento_id:
+        pag = _texto_pagamento(atendimento_id, explicativo=True)
+        if pag:
+            base += f"\n{pag}"
+    return base
+
+
+def montar_msg_fim(nome: str, servico: str, atendimento_id: str = None) -> str:
     if _eh_manutencao(servico):
         proximo = "já deixe o próximo alongamento agendado"
     else:
         proximo = "já deixe a manutenção agendada"
-    return (
+    msg = (
         f"O atendimento da {nome} está quase acabando. Antes dela ir embora:\n"
         f"- {proximo[0].upper()}{proximo[1:]}\n"
         f"- Comente do programa de indicações com ela"
     )
+    if atendimento_id:
+        pag = _texto_pagamento(atendimento_id, explicativo=True)
+        if pag:
+            msg += f"\n- {pag}"
+    return msg
 
 
 def job_lembretes():
@@ -402,7 +442,7 @@ def job_lembretes():
             "p_tolerancia_min": 5,
         }).execute()
         for a in (resp.data or []):
-            _enviar(montar_msg_inicio(a["nome"], a["servico"]))
+            _enviar(montar_msg_inicio(a["nome"], a["servico"], a.get("id")))
             db.rpc("marcar_avisado_inicio", {"p_id": a["id"]}).execute()
             logger.info(f"Lembrete de INÍCIO enviado: {a['nome']}")
     except Exception:
@@ -416,7 +456,7 @@ def job_lembretes():
             "p_tolerancia_min": 5,
         }).execute()
         for a in (resp.data or []):
-            _enviar(montar_msg_fim(a["nome"], a["servico"]))
+            _enviar(montar_msg_fim(a["nome"], a["servico"], a.get("id")))
             db.rpc("marcar_avisado_fim", {"p_id": a["id"]}).execute()
             logger.info(f"Lembrete de FIM enviado: {a['nome']}")
     except Exception:
@@ -476,13 +516,18 @@ def _disparar_followup(a: dict, modelo_chave: str, default_msg: str, marcar_rpc:
     template = _pref_cliente(a["cliente_id"], pref_texto_chave) or _config(modelo_chave, default_msg)
     msg_cliente = template.replace("{nome}", nome).replace("{hora}", hora)
 
+    # nota sutil de sinal — SÓ na mensagem interna pra Tassia, nunca na msg_cliente
+    nota_sinal = _texto_pagamento(a["id"], explicativo=False)
+    sufixo_sinal = f"\n{nota_sinal}" if nota_sinal else ""
+
     if tel:
-        texto = f"Lembrete: {nome} tem horário {quando_label} às {hora}.\nMensagem pronta no botão abaixo."
+        texto = (f"Lembrete: {nome} tem horário {quando_label} às {hora}.{sufixo_sinal}\n"
+                 f"Mensagem pronta no botão abaixo.")
         link = _link_whatsapp(tel, msg_cliente)
         _enviar(texto, botao_texto=f"Mandar lembrete WhatsApp {primeiro_nome}", botao_url=link)
     else:
         texto = (f"Lembrete: {nome} tem horário {quando_label} às {hora}, mas não tem "
-                 f"telefone cadastrado. Cadastre o número da {primeiro_nome} pra "
+                 f"telefone cadastrado.{sufixo_sinal} Cadastre o número da {primeiro_nome} pra "
                  f"ativar o botão de WhatsApp nos próximos lembretes.")
         _enviar(texto)
 

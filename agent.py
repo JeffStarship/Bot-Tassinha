@@ -17,7 +17,7 @@ import pytz
 from anthropic import Anthropic
 
 from tools import clientes, atendimentos, pagamentos, indicacoes
-from tools import metricas, risco, financeiro, servicos, preferencias, produtos
+from tools import metricas, risco, financeiro, servicos, preferencias, produtos, sinais
 import consultor
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,15 @@ TOOL_REGISTRY = {
     "ajustar_inicio_atendimento": atendimentos.ajustar_inicio_atendimento,
     "marcar_cancelamento": atendimentos.marcar_cancelamento,
     "remarcar_atendimento": atendimentos.remarcar_atendimento,
+    # Sessão 15 — sinal / pagamento
+    "registrar_sinal": sinais.registrar_sinal,
+    "marcar_pago_integral": sinais.marcar_pago_integral,
+    "ver_pagamento": sinais.ver_pagamento,
+    "registrar_pagamento_restante": sinais.registrar_pagamento_restante,
+    "guardar_credito": sinais.guardar_credito,
+    "registrar_sinal_retido": sinais.registrar_sinal_retido,
+    "ver_creditos": sinais.ver_creditos,
+    "aplicar_credito": sinais.aplicar_credito,
     "parar_de_avisar_reagendar": atendimentos.parar_de_avisar_reagendar,
     # Sessão 9 — preferências por cliente
     "definir_followup_cliente": preferencias.definir_followup_cliente,
@@ -522,6 +531,107 @@ TOOLS = [
         "name": "listar_produtos",
         "description": "Lista todos os produtos cadastrados. Use pra 'quais produtos eu tenho cadastrados'.",
         "input_schema": {"type": "object", "properties": {}},
+    },
+    {
+        "name": "registrar_sinal",
+        "description": "Registra um sinal (entrada/pagamento antecipado parcial) pro próximo agendamento da cliente. Use quando a Tassia disser 'a Bruna deu 40 de sinal', 'a Fernanda pagou 50 adiantado'. Pode ter vários sinais no mesmo atendimento (somam). IMPORTANTE: se o valor deixar o pago maior ou igual ao total do serviço, a tool devolve um alerta — nesse caso confirme com a Tassia se ela quis dizer que a cliente pagou TUDO (aí use marcar_pago_integral) ou se errou o valor. Sempre confirme o que entendeu antes e depois de registrar.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "valor": {"type": "number"},
+                "data_pagamento": {"type": "string", "description": "YYYY-MM-DD, default hoje"},
+                "forma": {"type": "string", "description": "pix, dinheiro ou cartao"},
+                "atendimento_id": {"type": "string", "description": "opcional; se não vier, usa o próximo agendamento"},
+            },
+            "required": ["cliente_id", "valor"],
+        },
+    },
+    {
+        "name": "marcar_pago_integral",
+        "description": "Marca o agendamento como pago integralmente adiantado (a cliente pagou tudo antes). Os lembretes passam a dizer 'já está tudo pago' em vez de falar de restante. Use quando a Tassia disser 'a Bruna já pagou tudo', 'pago integral'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "valor": {"type": "number", "description": "opcional; default = valor do serviço"},
+                "data_pagamento": {"type": "string"},
+                "forma": {"type": "string"},
+                "atendimento_id": {"type": "string"},
+            },
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "ver_pagamento",
+        "description": "Mostra o estado de pagamento do próximo agendamento da cliente: total, quanto já foi pago de sinal, quanto falta. Use pra 'quanto a Bruna já pagou', 'falta quanto pra Bruna'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "atendimento_id": {"type": "string"},
+            },
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "registrar_pagamento_restante",
+        "description": "Registra o recebimento do valor que faltava (depois do sinal). Calcula o restante sozinho. Use no fechamento do atendimento: 'recebi o restante da Bruna'. Geralmente vem junto de concluir o atendimento.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "atendimento_id": {"type": "string"},
+                "forma": {"type": "string"},
+            },
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "guardar_credito",
+        "description": "Guarda um valor como crédito da cliente (sinal preservado num cancelamento). Use quando a Tassia, ao cancelar um agendamento com sinal, disser que o valor vale pra próxima. O crédito fica ativo até ser aplicado.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "valor": {"type": "number"},
+                "origem_atendimento_id": {"type": "string"},
+            },
+            "required": ["cliente_id", "valor"],
+        },
+    },
+    {
+        "name": "registrar_sinal_retido",
+        "description": "Registra que a cliente PERDEU o sinal (não vale pra próxima) — vira receita da Tassia hoje. Use quando a Tassia, ao cancelar/no-show, disser que a cliente perdeu o sinal.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "atendimento_id": {"type": "string"},
+                "valor": {"type": "number"},
+            },
+            "required": ["atendimento_id", "valor"],
+        },
+    },
+    {
+        "name": "ver_creditos",
+        "description": "Mostra os créditos ativos de uma cliente (valores guardados de sinais preservados). Use pra 'a Bruna tem crédito', 'a Fernanda tem saldo'.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"cliente_id": {"type": "string"}},
+            "required": ["cliente_id"],
+        },
+    },
+    {
+        "name": "aplicar_credito",
+        "description": "Aplica o crédito guardado da cliente como sinal do próximo agendamento. SÓ chame depois da Tassia CONFIRMAR que quer aplicar (pergunte antes). Se o crédito for maior que o serviço, a tool avisa da sobra pra Tassia decidir — não decide sozinho.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "atendimento_id": {"type": "string"},
+            },
+            "required": ["cliente_id"],
+        },
     },
     {
         "name": "escalar_para_consultor",
