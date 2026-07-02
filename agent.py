@@ -71,6 +71,7 @@ TOOL_REGISTRY = {
     "atualizar_status_atendimento": atendimentos.atualizar_status_atendimento,
     "ajustar_inicio_atendimento": atendimentos.ajustar_inicio_atendimento,
     "marcar_cancelamento": atendimentos.marcar_cancelamento,
+    "remarcar_atendimento": atendimentos.remarcar_atendimento,
     "parar_de_avisar_reagendar": atendimentos.parar_de_avisar_reagendar,
     # Sessão 9 — preferências por cliente
     "definir_followup_cliente": preferencias.definir_followup_cliente,
@@ -407,8 +408,21 @@ TOOLS = [
         },
     },
     {
+        "name": "remarcar_atendimento",
+        "description": "Muda a data e/ou hora do próximo atendimento agendado de uma cliente, SEM cancelar e SEM criar outro. Use SEMPRE que a Tassia quiser só mudar o horário/dia de um agendamento existente: 'muda a Bruna pra sexta', 'passa o horário da Bruna pras 15h', 'remarca a Bruna pra dia 20'. NÃO use cancelar+agendar pra isso — remarcar mantém as métricas limpas (não conta como cancelamento).",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "cliente_id": {"type": "string"},
+                "nova_data": {"type": "string", "description": "YYYY-MM-DD"},
+                "nova_hora": {"type": "string", "description": "HH:MM, opcional — se não vier, mantém a hora atual"},
+            },
+            "required": ["cliente_id", "nova_data"],
+        },
+    },
+    {
         "name": "marcar_cancelamento",
-        "description": "Marca o próximo atendimento agendado de uma cliente como cancelado. Use quando a Tassia disser 'a Bruna cancelou'. Se ela já vai reagendar em seguida, passe reagendou=True. Se não reagendou, a cliente aparece no resumo diário até reagendar.",
+        "description": "Marca o próximo atendimento agendado de uma cliente como cancelado. Use quando a Tassia disser 'a Bruna cancelou' (cancelamento de verdade, a cliente não vem). ATENÇÃO: se ela só quer MUDAR o dia/horário, use remarcar_atendimento em vez desta — remarcar não é cancelar. Se ela cancelou mas já vai reagendar em seguida, passe reagendou=True. Se não reagendou, a cliente aparece no resumo diário até reagendar.",
         "input_schema": {
             "type": "object",
             "properties": {

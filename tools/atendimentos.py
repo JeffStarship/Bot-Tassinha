@@ -67,6 +67,16 @@ def agendar(cliente_id: str, data: str, hora: str = None, servico: str = None,
     }
     payload = {k: v for k, v in payload.items() if v is not None}
     resp = db.table("atendimentos").insert(payload).execute()
+
+    # Ao agendar um novo horário, limpa qualquer pendência de reagendamento
+    # dessa cliente — ela acabou de ser reagendada, não deve mais aparecer no
+    # relatório como "precisa reagendar".
+    try:
+        db.table("atendimentos").update({"precisa_reagendar": False}) \
+            .eq("cliente_id", cliente_id).eq("precisa_reagendar", True).execute()
+    except Exception:
+        pass
+
     return {"agendado": True, "atendimento": resp.data[0]}
 
 
@@ -166,6 +176,56 @@ def ajustar_inicio_atendimento(
         return {"ok": True, "acao": "inicio_ajustado", "hora_inicio": hora_inicio}
 
     return {"ok": False, "erro": "diga se ainda não começou ou a que horas começou"}
+
+
+def remarcar_atendimento(cliente_id: str, nova_data: str, nova_hora: str = None) -> dict:
+    """
+    Remarca (muda a data/hora) do próximo atendimento agendado de uma cliente,
+    SEM cancelar nem criar outro. Use quando a Tassia disser "muda o horário da
+    Bruna pra tal dia", "passa a Bruna pra sexta", "remarca a Bruna".
+
+    Importante: remarcar NÃO é cancelar. Isso mantém as métricas limpas — não
+    conta como cancelamento nem infla a contagem de agendamentos. É a mesma
+    reserva mudando de dia.
+
+    nova_data: YYYY-MM-DD. nova_hora: HH:MM (opcional; se não vier, mantém a
+    hora atual). Remarca o próximo agendamento futuro da cliente.
+    """
+    from datetime import date
+    db = get_client()
+    hoje = date.today().isoformat()
+    resp = (
+        db.table("atendimentos")
+        .select("id, data, hora, servico")
+        .eq("cliente_id", cliente_id)
+        .eq("status", "agendado")
+        .gte("data", hoje)
+        .order("data")
+        .execute()
+    )
+    if not resp.data:
+        return {"ok": False, "erro": "nenhum atendimento agendado futuro pra essa cliente"}
+
+    ag = resp.data[0]
+    update = {
+        "data": nova_data,
+        "precisa_reagendar": False,  # remarcou -> não é mais pendência
+        # zera as flags de lembrete já enviado, pros lembretes valerem pro novo horário
+        "avisado_followup_1d": False,
+        "avisado_followup_3h": False,
+    }
+    if nova_hora is not None:
+        update["hora"] = nova_hora
+
+    db.table("atendimentos").update(update).eq("id", ag["id"]).execute()
+
+    return {
+        "ok": True,
+        "remarcado": True,
+        "de": {"data": ag["data"], "hora": ag["hora"]},
+        "para": {"data": nova_data, "hora": nova_hora or ag["hora"]},
+        "servico": ag.get("servico"),
+    }
 
 
 def marcar_cancelamento(cliente_id: str, reagendou: bool = False) -> dict:
